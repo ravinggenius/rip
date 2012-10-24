@@ -33,7 +33,8 @@ module Rip
 
     # NOTE anything that should not be followed by an expression terminator
     rule(:block_expression) do
-      parameters = parens(comma_list(invocation | object).as(:parameters))
+      # parameters = parens(comma_list(invocation | object).as(:parameters))
+      parameters = parens(comma_list(phrase).as(:parameters))
       block_body = surround_with(brace_open, statements.as(:body), brace_close)
       (keyword >> whitespaces? >> parameters.maybe >> whitespaces? >> block_body).as(:block)
     end
@@ -42,22 +43,36 @@ module Rip
 
     # NOTE anything that might be followed by an expression terminator
     rule(:simple_expression) do
-      (((postfix | keyword | phrase) >> (spaces >> postfix).maybe) | postfix) >> spaces? >> expression_terminator?
+      body = (keyword.as(:keyword) >> spaces >> postfix.absent? >> phrase.as(:body)) | keyword.as(:keyword) | phrase.as(:body)
+      body >> (spaces >> postfix).maybe >> spaces? >> expression_terminator?
     end
 
     # TODO allow parenthesis around phrase to arbitrary levels
-    rule(:phrase) { (keyword | postfix).absent? >> (invocation | object) }
+    rule(:phrase) do
+      # body = operator_invocation | regular_invocation | object | reference
+      body = object | regular_invocation | reference
+      property = dot >> (regular_invocation | reference).as(:property)
 
-    rule(:postfix) do
-      postfix_tail = spaces >> maybe_parens(phrase.as(:postfix_argument))
-      (if_keyword >> postfix_tail).as(:if_postfix) | (unless_keyword >> postfix_tail).as(:unless_postfix) | (keyword >> postfix_tail).as(:postfix)
+      # ((body | nested_parens(phrase)) >> property.maybe) | parens(phrase)
+
+      # (phrase >> property.maybe) | (body >> property.maybe)
+      # (phrase | body) >> property.maybe
+      # ((body.absent? >> phrase) | body) >> property.maybe
+      (body | (property.present? >> phrase)) >> property.maybe
+
+      # reply = body
+      # puts; puts property.present?.inspect, property.absent?.inspect
+      # while (reply >> property.present?)
+      #   reply = reply >> property
+      # end
+      # reply
     end
+
+    rule(:postfix) { ((if_keyword | unless_keyword) >> spaces >> phrase.as(:argument)).as(:postfix) }
 
     #---------------------------------------------
 
-    rule(:invocation) { regular_invocation | operator_invocation }
-
-    rule(:regular_invocation) { ((block_expression | reference) >> parens(comma_list(object).as(:arguments))).as(:invocation) }
+    rule(:regular_invocation) { ((block_expression | reference) >> parens(comma_list(phrase).as(:arguments))).as(:invocation) }
 
     # NOTE assignments are parsed as operator invocation
     # TODO consider multiple assignment
@@ -66,10 +81,7 @@ module Rip
 
     #---------------------------------------------
 
-    # FIXME invocation instead of regular_invocation
-    rule(:object) { (block_expression | recursive_object | simple_object | regular_invocation | reference) >> property.repeat.as(:property_chain) }
-
-    rule(:property) { dot >> (regular_invocation | reference) }
+    rule(:object) { simple_object | block_expression | recursive_object }
 
     # TODO rules for system, date, time, datetime, version, units?
     rule(:simple_object) { numeric | character | string | regular_expression }
@@ -216,8 +228,8 @@ module Rip
     #---------------------------------------------
 
     # TODO allow type restriction
-    # FIXME allow more types to be used as the key
-    rule(:key_value_pair) { (simple_object | reference).as(:key) >> spaces? >> colon >> spaces? >> object.as(:value) }
+    # FIXME use phrase as the key
+    rule(:key_value_pair) { (object | reference).as(:key) >> spaces? >> colon >> spaces? >> phrase.as(:value) }
 
     rule(:range) do
       rangable_object = integer | character | reference
@@ -245,16 +257,12 @@ module Rip
       surround_with(parenthesis_open, center, parenthesis_close)
     end
 
-    def maybe_parens(center)
-      maybe_surround_with(parenthesis_open, center, parenthesis_close)
+    def nested_parens(center)
+      surround_with(parenthesis_open, center | nested_parens(center), parenthesis_close)
     end
 
     def surround_with(left, center, right = left)
       left >> whitespaces? >> center >> whitespaces? >> right
-    end
-
-    def maybe_surround_with(left, center, right = left)
-      surround_with(left, center, right) | center
     end
 
     def comma_list(thing)
